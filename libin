@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+import os
+import sys
+import zipfile
+import json
+import argparse
+from datetime import datetime
+
+def generate_name():
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    rand = os.urandom(3).hex()
+    return f"libin_{ts}_{rand}.libin"
+
+def pack(inputs, output=None, recursive=False):
+    # Determine output filename
+    if not output:
+        # If last argument ends with .libin, use it as output name
+        if inputs and inputs[-1].lower().endswith('.libin'):
+            output = inputs[-1]
+            inputs = inputs[:-1]
+        else:
+            output = generate_name()
+    errors = False
+
+    try:
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as z:
+            for item in inputs:
+                if os.path.isfile(item):
+                    arc_name = os.path.basename(item)
+                    try:
+                        z.write(item, arc_name)
+                        print(f"Successfully packed: {arc_name}")
+                    except Exception as e:
+                        print(f"Unable to pack file: {item}: {e}")
+                        errors = True
+                elif os.path.isdir(item):
+                    if not recursive:
+                        print(f"Skipping folder (use -r): {item}")
+                        continue
+                    for root, _, files in os.walk(item):
+                        for f in files:
+                            full = os.path.join(root, f)
+                            arc = os.path.join(os.path.basename(item),
+                                               os.path.relpath(full, item))
+                            try:
+                                z.write(full, arc)
+                                print(f"Successfully packed: {arc}")
+                            except Exception as e:
+                                print(f"Unable to pack file: {full}: {e}")
+                                errors = True
+                else:
+                    print(f"Unable to pack file: {item}: Not found")
+                    errors = True
+    except Exception as e:
+        print(f"Fatal error during packing: {e}")
+        sys.exit(1)
+
+    print(f"Pack complete: {output}")
+    sys.exit(1 if errors else 0)
+
+def unpack(libin_file):
+    if not os.path.isfile(libin_file):
+        print(f"File not found: {libin_file}")
+        sys.exit(1)
+    base = os.path.splitext(os.path.basename(libin_file))[0]
+    outdir = base
+    i = 1
+    while os.path.exists(outdir):
+        outdir = f"{base}_{i}"
+        i += 1
+    try:
+        with zipfile.ZipFile(libin_file, "r") as z:
+            z.extractall(outdir)
+    except Exception as e:
+        print(f"Unable to unpack file: {libin_file}: {e}")
+        sys.exit(1)
+    print(f"Unpacked to: {outdir}")
+    sys.exit(0)
+
+def info(libin_file):
+    if not os.path.isfile(libin_file):
+        print(f"File not found: {libin_file}")
+        sys.exit(1)
+    try:
+        with zipfile.ZipFile(libin_file, "r") as z:
+            if "manifest.json" in z.namelist():
+                manifest = json.loads(z.read("manifest.json"))
+                print(json.dumps(manifest, indent=4))
+            else:
+                print("No manifest found.")
+    except Exception as e:
+        print(f"Unable to open file: {libin_file}: {e}")
+        sys.exit(1)
+
+def main():
+    parser = argparse.ArgumentParser(prog="libin", description="Libin Archive Tool")
+    sub = parser.add_subparsers(dest="command")
+
+    pk = sub.add_parser("pack", help="Pack files/folders into .libin")
+    pk.add_argument("inputs", nargs="+", help="Files/folders to pack (last may be output name)")
+    pk.add_argument("-r", "--recursive", action="store_true", help="Recursively pack folders")
+    pk.add_argument("-o", "--output", help="Output .libin filename")
+
+    up = sub.add_parser("unpack", help="Unpack a .libin file")
+    up.add_argument("file", help=".libin file to unpack")
+
+    inf = sub.add_parser("info", help="Show manifest info in .libin")
+    inf.add_argument("file", help=".libin file to inspect")
+
+    args = parser.parse_args()
+    if args.command == "pack":
+        pack(args.inputs, args.output, args.recursive)
+    elif args.command == "unpack":
+        unpack(args.file)
+    elif args.command == "info":
+        info(args.file)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
